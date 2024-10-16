@@ -15,6 +15,7 @@ class Example extends Phaser.Scene
         this.moveHistory = [];
         this.halfMoveClock = 0;
         this.fullMoveNumber = 1;
+        this.game = null;
     }
 
     preload ()
@@ -34,6 +35,8 @@ class Example extends Phaser.Scene
 
         this.load.audio('move-sound', 'https://images.chesscomfiles.com/chess-themes/sounds/_MP3_/default/move-self.mp3');
         this.load.audio('capture-sound', 'https://images.chesscomfiles.com/chess-themes/sounds/_MP3_/default/capture.mp3');
+
+        this.load.script('chessjs', 'https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js');
     }
 
     create ()
@@ -45,6 +48,8 @@ class Example extends Phaser.Scene
         this.placePieces();
         this.input.on('gameobjectdown', this.onPieceSelected, this);
         this.input.on('pointerdown', this.onBoardClicked, this);
+
+        this.game = new Chess();
     }
 
     resetBoard()
@@ -64,6 +69,7 @@ class Example extends Phaser.Scene
         this.moveHistory = [];
         this.halfMoveClock = 0;
         this.fullMoveNumber = 1;
+        this.game.reset();
     }
 
     createCheckerboard()
@@ -117,7 +123,7 @@ class Example extends Phaser.Scene
     placePieces()
     {
         const { startX, startY, squareSize, borderSize } = this.boardProperties;
-        const pieceScale = 0.4; // Adjusted scale to fit 60x60 squares
+        const pieceScale = 0.4;
 
         const placePiece = (piece, col, row) => {
             const x = startX + col * squareSize + borderSize + squareSize / 2;
@@ -181,23 +187,35 @@ class Example extends Phaser.Scene
             const row = Math.floor((pointer.y - startY - borderSize) / squareSize);
 
             if (col >= 0 && col < 8 && row >= 0 && row < 8) {
-                if (this.isValidMove(this.selectedPiece, col, row)) {
+                const move = {
+                    from: this.getSquareName(this.selectedPiece.boardPosition.col, this.selectedPiece.boardPosition.row),
+                    to: this.getSquareName(col, row)
+                };
+
+                const result = this.game.move(move);
+                if (result) {
                     this.movePiece(this.selectedPiece, col, row);
                 }
             }
         }
     }
 
+    getSquareName(col, row) {
+        const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+        const ranks = ['8', '7', '6', '5', '4', '3', '2', '1'];
+        return files[col] + ranks[row];
+    }
+
     switchTurn()
     {
         this.turn = this.turn === 'white' ? 'black' : 'white';
         const king = this.pieces.getChildren().find(piece => piece && piece.piece === 'king' && piece.color === this.turn);
-        this.inCheck = king ? this.isKingInCheck(king) : false;
+        this.inCheck = this.game.in_check();
 
-        if (this.isCheckmate(this.turn)) {
+        if (this.game.in_checkmate()) {
             const winner = this.turn === 'white' ? 'Black' : 'White';
             this.showWinMessage(winner + ' wins by checkmate!');
-        } else if (this.isStalemate(this.turn)) {
+        } else if (this.game.in_stalemate()) {
             this.showWinMessage('Stalemate! The game is a draw.');
         } else if (this.turn === 'black') {
             this.makeAIMove();
@@ -206,106 +224,6 @@ class Example extends Phaser.Scene
         if (this.turn === 'white') {
             this.fullMoveNumber++;
         }
-    }
-
-    isValidMove(piece, targetCol, targetRow)
-    {
-        if (!piece || !piece.boardPosition) return false;
-
-        const { col: currentCol, row: currentRow } = piece.boardPosition;
-        const dx = targetCol - currentCol;
-        const dy = targetRow - currentRow;
-
-        const targetPiece = this.getPieceAt(targetCol, targetRow);
-        if (targetPiece && targetPiece.color === piece.color) {
-            return false;
-        }
-
-        let isValid = false;
-
-        switch (piece.piece) {
-            case 'pawn':
-                const direction = piece.color === 'white' ? -1 : 1;
-                if (dx === 0 && dy === direction && !targetPiece) {
-                    isValid = true;
-                }
-                if (dx === 0 && dy === 2 * direction && !targetPiece && 
-                    !this.getPieceAt(targetCol, currentRow + direction) && 
-                    ((piece.color === 'white' && currentRow === 6) || (piece.color === 'black' && currentRow === 1))) {
-                    isValid = true;
-                }
-                if (Math.abs(dx) === 1 && dy === direction && targetPiece && targetPiece.color !== piece.color) {
-                    isValid = true;
-                }
-                break;
-            case 'knight':
-                isValid = (Math.abs(dx) === 2 && Math.abs(dy) === 1) || (Math.abs(dx) === 1 && Math.abs(dy) === 2);
-                break;
-            case 'bishop':
-                isValid = Math.abs(dx) === Math.abs(dy) && this.isClearPath(currentCol, currentRow, targetCol, targetRow);
-                break;
-            case 'rook':
-                isValid = (dx === 0 || dy === 0) && this.isClearPath(currentCol, currentRow, targetCol, targetRow);
-                break;
-            case 'queen':
-                isValid = (dx === 0 || dy === 0 || Math.abs(dx) === Math.abs(dy)) && this.isClearPath(currentCol, currentRow, targetCol, targetRow);
-                break;
-            case 'king':
-                isValid = Math.abs(dx) <= 1 && Math.abs(dy) <= 1;
-                if (!isValid && Math.abs(dx) === 2 && dy === 0) {
-                    isValid = this.canCastle(piece, targetCol);
-                }
-                break;
-        }
-
-        if (isValid) {
-            // Check if the move would put the king in check
-            const originalPosition = { ...piece.boardPosition };
-            const capturedPiece = this.getPieceAt(targetCol, targetRow);
-            
-            piece.boardPosition = { col: targetCol, row: targetRow };
-            if (capturedPiece) {
-                this.pieces.remove(capturedPiece);
-            }
-
-            const king = this.pieces.getChildren().find(p => p && p.piece === 'king' && p.color === piece.color);
-            const wouldBeInCheck = king ? this.isKingInCheck(king) : false;
-
-            // Undo the move
-            piece.boardPosition = originalPosition;
-            if (capturedPiece) {
-                this.pieces.add(capturedPiece);
-            }
-
-            if (wouldBeInCheck) {
-                isValid = false;
-            }
-        }
-
-        return isValid;
-    }
-
-    isClearPath(startCol, startRow, endCol, endRow)
-    {
-        const dx = Math.sign(endCol - startCol);
-        const dy = Math.sign(endRow - startRow);
-        let currentCol = startCol + dx;
-        let currentRow = startRow + dy;
-
-        while (currentCol !== endCol || currentRow !== endRow) {
-            if (this.getPieceAt(currentCol, currentRow)) {
-                return false;
-            }
-            currentCol += dx;
-            currentRow += dy;
-        }
-
-        return true;
-    }
-
-    getPieceAt(col, row)
-    {
-        return this.pieces.getChildren().find(piece => piece && piece.boardPosition && piece.boardPosition.col === col && piece.boardPosition.row === row);
     }
 
     movePiece(piece, targetCol, targetRow)
@@ -325,30 +243,6 @@ class Example extends Phaser.Scene
         } else {
             this.moveSound.play();
             this.halfMoveClock++;
-        }
-
-        // Handle castling
-        if (piece.piece === 'king' && Math.abs(targetCol - piece.boardPosition.col) === 2) {
-            const isKingSideCastling = targetCol > piece.boardPosition.col;
-            const rookCol = isKingSideCastling ? 7 : 0;
-            const rookTargetCol = isKingSideCastling ? targetCol - 1 : targetCol + 1;
-            const rook = this.getPieceAt(rookCol, piece.boardPosition.row);
-            
-            if (rook) {
-                this.moveRook(rook, rookTargetCol, piece.boardPosition.row);
-            }
-        }
-
-        // Update castling rights
-        if (piece.piece === 'king') {
-            this.castlingRights[piece.color].kingSide = false;
-            this.castlingRights[piece.color].queenSide = false;
-        } else if (piece.piece === 'rook') {
-            if (piece.boardPosition.col === 0) {
-                this.castlingRights[piece.color].queenSide = false;
-            } else if (piece.boardPosition.col === 7) {
-                this.castlingRights[piece.color].kingSide = false;
-            }
         }
 
         this.moveHistory.push({
@@ -380,23 +274,9 @@ class Example extends Phaser.Scene
         });
     }
 
-    moveRook(rook, targetCol, targetRow) {
-        if (!rook) return;
-
-        const { startX, startY, squareSize, borderSize } = this.boardProperties;
-        const x = startX + targetCol * squareSize + borderSize + squareSize / 2;
-        const y = startY + targetRow * squareSize + borderSize + squareSize / 2;
-
-        this.tweens.add({
-            targets: rook,
-            x: x,
-            y: y,
-            duration: 200,
-            ease: 'Power2',
-            onComplete: () => {
-                rook.boardPosition = { col: targetCol, row: targetRow };
-            }
-        });
+    getPieceAt(col, row)
+    {
+        return this.pieces.getChildren().find(piece => piece && piece.boardPosition && piece.boardPosition.col === col && piece.boardPosition.row === row);
     }
 
     isPawnPromotion(piece, targetRow) {
@@ -414,7 +294,7 @@ class Example extends Phaser.Scene
             const x = startX + col * squareSize + borderSize + squareSize / 2;
             const y = startY + (row + (piece.color === 'white' ? 1 : -1) * (index + 1)) * squareSize + borderSize + squareSize / 2;
             
-            const promotionButton = this.add.image(x, y, `${piece.color}-${promotionPiece}`).setScale(0.4); // Adjusted scale
+            const promotionButton = this.add.image(x, y, `${piece.color}-${promotionPiece}`).setScale(0.4);
             promotionButton.setInteractive();
             promotionButton.on('pointerdown', () => this.promotePawn(piece, promotionPiece, col, row, promotionButtons));
             promotionButtons.push(promotionButton);
@@ -431,7 +311,7 @@ class Example extends Phaser.Scene
         this.pieces.remove(pawn);
         pawn.destroy();
 
-        const promotedPiece = this.add.image(x, y, `${pawn.color}-${newPiece}`).setScale(0.4); // Adjusted scale
+        const promotedPiece = this.add.image(x, y, `${pawn.color}-${newPiece}`).setScale(0.4);
         promotedPiece.setInteractive();
         promotedPiece.piece = newPiece;
         promotedPiece.color = pawn.color;
@@ -440,52 +320,15 @@ class Example extends Phaser.Scene
 
         buttons.forEach(button => button.destroy());
 
+        this.game.move({
+            from: this.getSquareName(pawn.boardPosition.col, pawn.boardPosition.row),
+            to: this.getSquareName(col, row),
+            promotion: newPiece[0]
+        });
+
         this.selectedPiece = null;
         this.clearMoveIndicators();
         this.switchTurn();
-    }
-
-    isCheckmate(color) {
-        if (!this.inCheck) return false;
-
-        return this.hasNoLegalMoves(color);
-    }
-
-    isStalemate(color) {
-        if (this.inCheck) return false;
-
-        return this.hasNoLegalMoves(color);
-    }
-
-    hasNoLegalMoves(color) {
-        const pieces = this.pieces.getChildren().filter(piece => piece && piece.color === color);
-
-        for (let piece of pieces) {
-            for (let row = 0; row < 8; row++) {
-                for (let col = 0; col < 8; col++) {
-                    if (this.isValidMove(piece, col, row)) {
-                        return false;
-                    }
-                }
-            }
-        }
-
-        return true;
-    }
-
-    isKingInCheck(king) {
-        if (!king) return false;
-
-        const opponentColor = king.color === 'white' ? 'black' : 'white';
-        const opponentPieces = this.pieces.getChildren().filter(piece => piece && piece.color === opponentColor);
-
-        for (let piece of opponentPieces) {
-            if (this.isValidMove(piece, king.boardPosition.col, king.boardPosition.row)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     showWinMessage(message) {
@@ -500,15 +343,14 @@ class Example extends Phaser.Scene
 
         this.clearMoveIndicators();
 
-        for (let row = 0; row < 8; row++) {
-            for (let col = 0; col < 8; col++) {
-                if (this.isValidMove(piece, col, row)) {
-                    const targetPiece = this.getPieceAt(col, row);
-                    const color = targetPiece && targetPiece.color !== piece.color ? 0xff0000 : 0x00ff00;
-                    this.addMoveIndicator(col, row, color);
-                }
-            }
-        }
+        const legalMoves = this.game.moves({ square: this.getSquareName(piece.boardPosition.col, piece.boardPosition.row), verbose: true });
+
+        legalMoves.forEach(move => {
+            const col = 'abcdefgh'.indexOf(move.to[0]);
+            const row = '87654321'.indexOf(move.to[1]);
+            const color = move.captured ? 0xff0000 : 0x00ff00;
+            this.addMoveIndicator(col, row, color);
+        });
     }
 
     addMoveIndicator(col, row, color) {
@@ -525,192 +367,55 @@ class Example extends Phaser.Scene
         this.moveIndicators = [];
     }
 
-    canCastle(king, targetCol) {
-        if (!king || this.inCheck) return false;
-
-        const isKingSideCastling = targetCol > king.boardPosition.col;
-        const castlingRight = isKingSideCastling ? 'kingSide' : 'queenSide';
-
-        if (!this.castlingRights[king.color][castlingRight]) return false;
-
-        const rookCol = isKingSideCastling ? 7 : 0;
-        const rook = this.getPieceAt(rookCol, king.boardPosition.row);
-
-        if (!rook || rook.piece !== 'rook') return false;
-
-        const direction = isKingSideCastling ? 1 : -1;
-        for (let col = king.boardPosition.col + direction; col !== rookCol; col += direction) {
-            if (this.getPieceAt(col, king.boardPosition.row)) return false;
-        }
-
-        // Check if the king passes through a square that is under attack
-        for (let col = king.boardPosition.col; col !== targetCol; col += direction) {
-            const tempKing = { ...king, boardPosition: { col, row: king.boardPosition.row } };
-            if (this.isKingInCheck(tempKing)) return false;
-        }
-
-        return true;
-    }
-
     makeAIMove() {
-        const bestMove = this.findBestMove('black', 3);
-        if (bestMove) {
-            const piece = this.getPieceAt(bestMove.from.col, bestMove.from.row);
-            if (piece) {
-                this.movePiece(piece, bestMove.to.col, bestMove.to.row);
-            } else {
-                console.error('No piece found at the starting position of the best move');
-            }
-        } else {
-            console.error('No valid AI move found');
+        const possibleMoves = this.game.moves({ verbose: true });
+        if (possibleMoves.length === 0) {
+            const chessGameHistory = this.game.history();
+            const prompt = 'we are in the middle of playing a chess game here is the chessGameHistory= ' + chessGameHistory + ', I just played: ' + chessGameHistory[chessGameHistory.length-1] +', checkmate. Do not break character. be concise, do not drone on.';
+            
+            var chatScene = this.scene.get('ChatScene');
+            chatScene.sendChessMove(prompt, chatScene.chatManager);
+            return;
         }
+
+        const apiUrl = `https://stockfish.online/api/stockfish.php/?fen=${this.game.fen()}&depth=${5}&mode=bestmove`;
+        fetch(apiUrl)
+            .then(response => response.json())
+            .then(data => {
+                const bestMove = data.data.split(' ')[1];
+                const move = this.game.move({
+                    from: bestMove.slice(0,2),
+                    to: bestMove.slice(2,4),
+                    promotion: bestMove.length === 5 ? bestMove[4] : undefined
+                });
+
+                if (move) {
+                    const fromCol = 'abcdefgh'.indexOf(move.from[0]);
+                    const fromRow = '87654321'.indexOf(move.from[1]);
+                    const toCol = 'abcdefgh'.indexOf(move.to[0]);
+                    const toRow = '87654321'.indexOf(move.to[1]);
+
+                    const piece = this.getPieceAt(fromCol, fromRow);
+                    if (piece) {
+                        this.movePiece(piece, toCol, toRow);
+                    }
+
+                    const chessGameHistory = this.game.history();
+                    const prompt = 'we are in the middle of playing a chess game here is the chessGameHistory= ' + chessGameHistory.slice(0,-2).join(', ') + ', make a comment on the move I just played: ' + chessGameHistory[chessGameHistory.length-2] + ' then on the move you just played ' + chessGameHistory[chessGameHistory.length-1] + ' Do not break character, be concise, do not drone on.';
+                    var chatScene = this.scene.get('ChatScene');
+                    chatScene.sendChessMove(prompt, chatScene.chatManager);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
     }
 
-    findBestMove(color, depth) {
-        let bestMove = null;
-        let bestScore = color === 'black' ? -Infinity : Infinity;
-
-        const pieces = this.pieces.getChildren().filter(piece => piece && piece.color === color);
-
-        for (let piece of pieces) {
-            for (let row = 0; row < 8; row++) {
-                for (let col = 0; col < 8; col++) {
-                    if (this.isValidMove(piece, col, row)) {
-                        const move = {
-                            from: { ...piece.boardPosition },
-                            to: { col, row }
-                        };
-
-                        // Make the move
-                        const capturedPiece = this.getPieceAt(col, row);
-                        const originalPosition = { ...piece.boardPosition };
-                        piece.boardPosition = { col, row };
-                        if (capturedPiece) {
-                            this.pieces.remove(capturedPiece);
-                        }
-
-                        // Evaluate the move
-                        const score = this.minimax(depth - 1, color === 'white' ? 'black' : 'white', -Infinity, Infinity);
-
-                        // Undo the move
-                        piece.boardPosition = originalPosition;
-                        if (capturedPiece) {
-                            this.pieces.add(capturedPiece);
-                        }
-
-                        if (color === 'black') {
-                            if (score > bestScore) {
-                                bestScore = score;
-                                bestMove = move;
-                            }
-                        } else {
-                            if (score < bestScore) {
-                                bestScore = score;
-                                bestMove = move;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        return bestMove;
-    }
-
-    minimax(depth, color, alpha, beta) {
-        if (depth === 0) {
-            return this.evaluateBoard();
-        }
-
-        const pieces = this.pieces.getChildren().filter(piece => piece && piece.color === color);
-
-        if (color === 'black') {
-            let maxScore = -Infinity;
-            for (let piece of pieces) {
-                for (let row = 0; row < 8; row++) {
-                    for (let col = 0; col < 8; col++) {
-                        if (this.isValidMove(piece, col, row)) {
-                            const capturedPiece = this.getPieceAt(col, row);
-                            const originalPosition = { ...piece.boardPosition };
-                            piece.boardPosition = { col, row };
-                            if (capturedPiece) {
-                                this.pieces.remove(capturedPiece);
-                            }
-
-                            const score = this.minimax(depth - 1, 'white', alpha, beta);
-
-                            piece.boardPosition = originalPosition;
-                            if (capturedPiece) {
-                                this.pieces.add(capturedPiece);
-                            }
-
-                            maxScore = Math.max(maxScore, score);
-                            alpha = Math.max(alpha, score);
-                            if (beta <= alpha) {
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            return maxScore;
-        } else {
-            let minScore = Infinity;
-            for (let piece of pieces) {
-                for (let row = 0; row < 8; row++) {
-                    for (let col = 0; col < 8; col++) {
-                        if (this.isValidMove(piece, col, row)) {
-                            const capturedPiece = this.getPieceAt(col, row);
-                            const originalPosition = { ...piece.boardPosition };
-                            piece.boardPosition = { col, row };
-                            if (capturedPiece) {
-                                this.pieces.remove(capturedPiece);
-                            }
-
-                            const score = this.minimax(depth - 1, 'black', alpha, beta);
-
-                            piece.boardPosition = originalPosition;
-                            if (capturedPiece) {
-                                this.pieces.add(capturedPiece);
-                            }
-
-                            minScore = Math.min(minScore, score);
-                            beta = Math.min(beta, score);
-                            if (beta <= alpha) {
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            return minScore;
-        }
-    }
-
-    evaluateBoard() {
-        const pieceValues = {
-            'pawn': 1,
-            'knight': 3,
-            'bishop': 3,
-            'rook': 5,
-            'queen': 9,
-            'king': 100
-        };
-
-        let score = 0;
-
-        this.pieces.getChildren().forEach(piece => {
-            if (piece && piece.piece) {
-                const pieceScore = pieceValues[piece.piece];
-                if (piece.color === 'white') {
-                    score += pieceScore;
-                } else {
-                    score -= pieceScore;
-                }
-            }
-        });
-
-        return score;
+    isKingInCheck(king) {
+        if (!king) return false;
+        
+        const square = this.getSquareName(king.boardPosition.col, king.boardPosition.row);
+        return this.game.in_check() && this.game.turn() === king.color[0];
     }
 }
 
