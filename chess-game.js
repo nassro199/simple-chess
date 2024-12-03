@@ -1,7 +1,5 @@
-class Example extends Phaser.Scene
-{
-    constructor ()
-    {
+class Example extends Phaser.Scene {
+    constructor() {
         super();
         this.selectedPiece = null;
         this.turn = 'white';
@@ -18,8 +16,7 @@ class Example extends Phaser.Scene
         this.game = null;
     }
 
-    preload ()
-    {
+    preload() {
         this.load.image('white-pawn', 'https://assets-themes.chess.com/image/ejgfv/150/wp.png');
         this.load.image('white-knight', 'https://assets-themes.chess.com/image/ejgfv/150/wn.png');
         this.load.image('white-rook', 'https://assets-themes.chess.com/image/ejgfv/150/wr.png');
@@ -39,8 +36,7 @@ class Example extends Phaser.Scene
         this.load.script('chessjs', 'https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js');
     }
 
-    create ()
-    {
+    create() {
         this.moveSound = this.sound.add('move-sound');
         this.captureSound = this.sound.add('capture-sound');
 
@@ -52,8 +48,7 @@ class Example extends Phaser.Scene
         this.game = new Chess();
     }
 
-    resetBoard()
-    {
+    resetBoard() {
         if (this.pieces) {
             this.pieces.clear(true, true);
         }
@@ -72,8 +67,7 @@ class Example extends Phaser.Scene
         this.game.reset();
     }
 
-    createCheckerboard()
-    {
+    createCheckerboard() {
         const graphics = this.add.graphics();
         const squareSize = 60;
         const boardSize = 8;
@@ -120,8 +114,7 @@ class Example extends Phaser.Scene
         this.boardProperties = { startX, startY, squareSize, borderSize };
     }
 
-    placePieces()
-    {
+    placePieces() {
         const { startX, startY, squareSize, borderSize } = this.boardProperties;
         const pieceScale = 0.4;
 
@@ -167,8 +160,7 @@ class Example extends Phaser.Scene
         }
     }
 
-    onPieceSelected(pointer, gameObject)
-    {
+    onPieceSelected(pointer, gameObject) {
         if (gameObject && gameObject.color === this.turn && this.turn === 'white') {
             if (this.selectedPiece) {
                 this.selectedPiece.clearTint();
@@ -179,8 +171,7 @@ class Example extends Phaser.Scene
         }
     }
 
-    onBoardClicked(pointer)
-    {
+    onBoardClicked(pointer) {
         if (this.selectedPiece && this.turn === 'white') {
             const { startX, startY, squareSize, borderSize } = this.boardProperties;
             const col = Math.floor((pointer.x - startX - borderSize) / squareSize);
@@ -194,7 +185,7 @@ class Example extends Phaser.Scene
 
                 const result = this.game.move(move);
                 if (result) {
-                    this.movePiece(this.selectedPiece, col, row);
+                    this.movePiece(this.selectedPiece, col, row, result.flags);
                 }
             }
         }
@@ -206,8 +197,7 @@ class Example extends Phaser.Scene
         return files[col] + ranks[row];
     }
 
-    switchTurn()
-    {
+    switchTurn() {
         this.turn = this.turn === 'white' ? 'black' : 'white';
         const king = this.pieces.getChildren().find(piece => piece && piece.piece === 'king' && piece.color === this.turn);
         this.inCheck = this.game.in_check();
@@ -226,13 +216,34 @@ class Example extends Phaser.Scene
         }
     }
 
-    movePiece(piece, targetCol, targetRow)
-    {
+    movePiece(piece, targetCol, targetRow, flags) {
         if (!piece) return;
 
         const { startX, startY, squareSize, borderSize } = this.boardProperties;
         const x = startX + targetCol * squareSize + borderSize + squareSize / 2;
         const y = startY + targetRow * squareSize + borderSize + squareSize / 2;
+
+        // Handle castling
+        if (piece.piece === 'king' && flags && (flags.includes('k') || flags.includes('q'))) {
+            const isKingSide = flags.includes('k');
+            const rookStartCol = isKingSide ? 7 : 0;
+            const rookEndCol = isKingSide ? 5 : 3;
+            const rook = this.getPieceAt(rookStartCol, targetRow);
+            
+            if (rook) {
+                const rookX = startX + rookEndCol * squareSize + borderSize + squareSize / 2;
+                const rookY = startY + targetRow * squareSize + borderSize + squareSize / 2;
+                
+                this.tweens.add({
+                    targets: rook,
+                    x: rookX,
+                    y: rookY,
+                    duration: 200,
+                    ease: 'Power2'
+                });
+                rook.boardPosition = { col: rookEndCol, row: targetRow };
+            }
+        }
 
         const capturedPiece = this.getPieceAt(targetCol, targetRow);
         if (capturedPiece && capturedPiece.color !== piece.color) {
@@ -249,7 +260,8 @@ class Example extends Phaser.Scene
             piece: piece.piece,
             color: piece.color,
             from: { col: piece.boardPosition.col, row: piece.boardPosition.row },
-            to: { col: targetCol, row: targetRow }
+            to: { col: targetCol, row: targetRow },
+            flags: flags
         });
 
         this.tweens.add({
@@ -274,8 +286,7 @@ class Example extends Phaser.Scene
         });
     }
 
-    getPieceAt(col, row)
-    {
+    getPieceAt(col, row) {
         return this.pieces.getChildren().find(piece => piece && piece.boardPosition && piece.boardPosition.col === col && piece.boardPosition.row === row);
     }
 
@@ -315,7 +326,7 @@ class Example extends Phaser.Scene
         promotedPiece.setInteractive();
         promotedPiece.piece = newPiece;
         promotedPiece.color = pawn.color;
-        promotedPiece.boardPosition =  { col, row };
+        promotedPiece.boardPosition = { col, row };
         this.pieces.add(promotedPiece);
 
         buttons.forEach(button => button.destroy());
@@ -397,7 +408,7 @@ class Example extends Phaser.Scene
 
                     const piece = this.getPieceAt(fromCol, fromRow);
                     if (piece) {
-                        this.movePiece(piece, toCol, toRow);
+                        this.movePiece(piece, toCol, toRow, move.flags);
                     }
 
                     const chessGameHistory = this.game.history();
